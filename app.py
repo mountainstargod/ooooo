@@ -1,789 +1,704 @@
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-print("changes updated")
+# ... inside your account loop ...
 
-import dash
-from dash.dependencies import Input, Output
-import dash_html_components as html
-import dash_core_components as dcc
-import dash_bootstrap_components as dbc
-import dash_dangerously_set_inner_html    
+            for _ in range(n_baseline):  
 
-import datetime
-import pandas as pd
-import matplotlib.pyplot as plt
-import json
-import numpy as np
-import statsmodels
-import statsmodels.api as sm
-import plotly.graph_objects as go
+                
+                # 1. Generate the base 22 columns (transaction behavior)
+                tx_base = [
+                    acct, party_key, client_ref_date, tx_type, amt, cp,
+                    round(_rand_balance(),2), _rand_party_country(),
+                    0, False,
+                    party_type_cd,    
+                    non_nexus_flag,    
+                    sample_from_transactions(txn_map, "acct_currency_cd"),   #_biased_acct_currency(),
+                    _rand_transaction_key(acct, transaction_date), 
+                    trans_type_cd,   
+                    sample_from_transactions(txn_map, "channel_type_cd"),   #_biased_channel_type(),
+                    sample_from_transactions(txn_map, "transaction_strings"),   #_biased_transaction_strings(), 
+                    sample_from_transactions(txn_map, "cashier_order_flag"),   #_biased_cashier_order_flag(),
+                    _rand_local_currency(amt), 
+                    days_prior_review,         
+                    trans_direction,     
+                    transaction_date.strftime('%Y-%m-%d %H:%M:%S')
+                ]
+            
+                # 2. Call your demographic generator for this specific party
+                # This function should return a list of 20 items (Actor traits + 1.0 multipliers)
+                meta_payload = _expand_demographics_for_base0_client(acct, scenario, party_key=party_key)
+            
+                # 3. WIDEN the row by concatenating the lists
+                # Use '+' to join the two lists into one 42-member row
+                full_row = tx_base + meta_payload
+            
+                # 4. Append the single, complete row
+                rows.append(full_row)
 
-from pytrends.request import TrendReq
-from pandas import read_csv
-from pandas.io.formats.style import Styler
-from IPython.display import display
-from statsmodels.tools.eval_measures import meanabs
-from statsmodels.tools.eval_measures import meanabs
-from statsmodels.formula.api import ols
-from statsmodels.regression.linear_model import OLS
-from jupyterplot import ProgressPlot
+def _expand_demographics_for_base0_client(acct, scenario=None, party_key=None, opt_overrides=None):
+    
+    if scenario == "structuring":
+        cfg = scenario_config['structuring']
+        df_cfg = cfg['demographic_factors']
 
-import warnings
-warnings.filterwarnings("ignore")
+        def dynamic_sample(field_name, sub_path=None):
+            prob_key = f"{scenario}_{field_name}_probs"
+            default_probs = cfg.get(sub_path, cfg).get(f"{field_name}{'_prob' if field_name == 'PEP' else '_probs'}")
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            return np.random.choice(len(p_vector), p=p_vector)
 
-import os
-import sys
-import time
-import base64
+        actor = {
+            "PEP": np.random.binomial(1, opt_overrides.get(f"{scenario}_PEP_prob", cfg['demographics']['PEP_prob'])),
+            "NatRisk":      dynamic_sample("NatRisk", "demographics"),      
+            "AgeGroup":     dynamic_sample("AgeGroup", "demographics"),     
+            "Occ":          dynamic_sample("Occ", "demographics"),          
+            "Income":       dynamic_sample("Income", "demographics"),       
+            "EntityType":   dynamic_sample("EntityType", "demographics"),   
+            "Industry":     dynamic_sample("Industry", "demographics"),     
+            "Channel":      dynamic_sample("channel"),                      
+            "Network":      dynamic_sample("network"),                      
+            "Jurisdiction": dynamic_sample("jurisdiction")                  
+        }
 
+        PEP_f      = 1.0
+        NatRisk_f  = 1.0
+        Occ_f      = 1.0
+        Income_f   = 1.0
+        Entity_f   = 1.0
+        Industry_f = 1.0
+        Channel_f  = 1.0
+        Network_f  = 1.0
+        Juris_f    = 1.0
 
+        Total_Risk = (PEP_f * NatRisk_f * Occ_f * Income_f * Entity_f * Industry_f * Channel_f * Network_f * Juris_f)
+        Total_Behavioral_Risk = max(1e-6, Total_Risk)
 
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import LSTM
-from keras.layers import Dropout
-from keras.callbacks import EarlyStopping
-from keras.layers import GaussianNoise
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-
-class Plotter:
-
-    def plotly_plot(self, industry_count, predicted_df, column, actual_values, predictions, starting_quarter, ending_quarter, annotation, title, summary=None):
-        predicted_df["Actual %s Values" % column] /= 1000
-        predicted_df["Predicted %s Values" % column] /= 1000
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=predicted_df.index, y=predicted_df["Actual %s Values" % column],
-                        mode='lines+markers',
-                        name='Actual Values - %s' % column,
-                        line=dict(width=3)))
-        fig.add_trace(go.Scatter(x=predicted_df.index, y=predicted_df["Predicted %s Values" % column],
-                        mode='lines+markers',
-                        name='Predicted Values - %s' % column,
-                        line=dict(width=3)))
-        annotation = annotation.replace(',','<br>').replace('for ', 'for<br>')
-        fig.add_annotation(x=1, y=predicted_df["Predicted %s Values" % column][-1], xref='paper', xshift=-20,xanchor="left", text=annotation, showarrow=False, font=dict(size=14))
-        fig.update_xaxes(showline=True, linewidth=4, linecolor='blue', mirror=True)  
-        fig.update_yaxes(showline=True, linewidth=4, linecolor='blue', mirror=True)
-        title = title.replace(',','<br>')
-        fig.update_layout(
-        title= title,
-        autosize=False,
-        width=700,
-        legend=dict(
-                orientation="h",
-                y = -0.3
-            )
-        )
-
-        fig.write_image('fig.svg')
-        s1=''
-        with open('fig.svg', encoding='utf-8') as f:
-            s1 = f.read()
+        metadata_payload = [
+            actor["PEP"], actor["NatRisk"], actor["AgeGroup"], actor["Occ"], 
+            actor["Income"], actor["EntityType"], actor["Industry"], 
+            actor["Channel"], actor["Network"], actor["Jurisdiction"],
+            PEP_f, NatRisk_f, Occ_f, Income_f, Entity_f, 
+            Industry_f, Channel_f, Network_f, Juris_f, Total_Behavioral_Risk
+        ]
         
-        s1=s1.replace('height="500"','',1).replace('width="700"','',1).replace('700','800',1).replace('700','800',1)
+    return metadta_payload
+
+    elif scenario == "velocity_spike":
+        cfg = scenario_config['velocity_spike']
+        dw = cfg["demographics"]
+
+        pep_prob = opt_overrides.get(f"{scenario}_PEP_prob", 0.1)
+        is_pep = np.random.binomial(1, pep_prob) == 1
         
-        predicted_df.index.name = "Quarter"
-        predicted_df.reset_index(level=0, inplace=True)
+        biz_prob = opt_overrides.get(f"{scenario}_Business_prob", 0.3)
+        is_biz = np.random.binomial(1, biz_prob) == 1
+        
+        youth_prob = opt_overrides.get(f"{scenario}_Youth_prob", 0.5)
+        is_young = np.random.binomial(1, youth_prob) == 1
+        
+        risk_shift = opt_overrides.get(f"{scenario}_risk_skew", 1.0)
+        risk_score = np.random.uniform(0, 1) ** (1 / risk_shift)
 
-        layout = html.Div(children=[
-            dash_dangerously_set_inner_html.DangerouslySetInnerHTML(s1),
-            dbc.Table.from_dataframe(predicted_df),
-            html.Div(dash_dangerously_set_inner_html.DangerouslySetInnerHTML(summary.as_html())) if summary else html.Div()
-            ],
-            className='wrapper huge',
-            style={'padding': '10px', 'margin-top': '20px'}
-        )
+        actor = {
+            "PEP": is_pep,
+            "EntityType": 1 if is_biz else 0, # Mapping Business to 1
+            "AgeGroup": 0 if is_young else 1,  # Mapping Young to 0
+            "BaseRisk": risk_score
+        }
 
-        return layout
-
-    def matplotlib_plot(self, industry_count, predicted_df, column, actual_values, predictions, starting_quarter, ending_quarter, annotation, title, summary=None):
-        plt.figure(figsize=(20,7.5))
-        plt.rcParams["axes.edgecolor"] = "blue"
-        plt.rcParams["axes.linewidth"] = 5
-        font = {'weight' : 'bold',
-            'size'   : 20}
-        plt.rc('font', **font)
-        plt.ylabel("In Thousand Dollars")
-        predicted_df["Actual %s Values" % column] /= 1000
-        predicted_df["Predicted %s Values" % column] /= 1000
-        plt.plot(predicted_df.index, predicted_df["Actual %s Values" % column], label="Actual Values - %s" % column, color="red", linewidth=5)
-        plt.plot(predicted_df.index, predicted_df["Predicted %s Values" % column], label="Predicted Values - %s" % column, color="blue", linewidth=5)
-        plt.xticks(predicted_df.index, rotation=90)
-        plt.legend(fontsize=18)
-        plt.title(title, fontsize=20, fontweight="bold")
-        font = {'weight' : 'bold',
-            'size'   : 22}
-        plt.rc('font', **font)
-        plt.annotate(annotation, (predicted_df.index[-1], predicted_df.iloc[-1, 1]), fontsize=14)  
-        print('\n\033[1m\033[4mTable %d: %s\033[0m' % (industry_count, column))
-        predicted_df.index.name = "Quarter"
+        network_centrality_score = 1.0
+        channel_hop_score        = 1.0
+        savings_drain_ratio      = 1.0
        
-        temp_file = column +".png"
-        plt.savefig(temp_file, bbox_inches = "tight", dpi=300)
+        F_burst = 1.0
+      
+        F_size = 1.0
+
+        F_inter = 1.0
+
+        F_intra = 1.0
+
+        F_amt = 1.0
+
+        Total_Behavioral_Risk = F_burst * F_size * F_inter * F_intra * F_amt * network_centrality_score * channel_hop_score
+
+        s_log_adj = opt_overrides.get(f"{scenario_type}_risk_log_base_adj", 1.0)
+
+        compressed_total_risk = s_log_adj + np.log1p(Total_Behavioral_Risk)
+
+        metadata_payload = [
+            actor["PEP"], actor["EntityType"], actor["AgeGroup"], actor["BaseRisk"], 
+             F_burst, F_size, F_inter, F_intra, F_amt, network_centrality_score, channel_hop_score, Total_Behavioral_Risk
+        ]
+
+    elif scenario == "layering":
         
-        # Embed the result in the html output.
-        data = base64.b64encode(open(temp_file, "rb").read()).decode('ascii')
+        cfg = scenario_config['layering']
+        dw = cfg['demographics']
 
-        img = html.Img(
-        width='100%',
-        src = 'data:image/png;base64,{}'.format(data)
-        )
-        
-        os.remove(temp_file)
-
-        predicted_df.reset_index(level=0, inplace=True)
-        
-        layout = html.Div(children=[
-        img,
-        html.H6(children='Table %s: %s' % (industry_count, column)),
-        dbc.Table.from_dataframe(predicted_df),
-        html.Div(dash_dangerously_set_inner_html.DangerouslySetInnerHTML(summary.as_html())) if summary else html.Div()
-        ],
-        className='wrapper huge',
-        style={'padding': '10px', 'margin-top': '20px'}    
-        )
-
-        return layout
-
-
-class Modeller:
-
-    def __init__(self, ploter, plot_type, show_trend=False):
-        self.weighing_method = "expalmon" # or "beta"
-        self.rf_lag = 1
-        self.pytrend = TrendReq(hl='en-US')
-        self.ploter = ploter
-        self.layouts = []
-        self.show_trend = show_trend
-        self.plot = ploter.plotly_plot
-        if plot_type == 'MAT':
-            self.plot = ploter.matplotlib_plot
-
-    def border_color_green(self, val):
-        return ["border : solid 3px green" for x in val]
-
-    # this function requests the latest data from Google Trends
-    def request_google(self, catno=73, kw_list = [], geo = "SG"):
-        """
-        Calls Googletrend data.
-        Arguments: 
-            category number. for example in the google link:
-            https://trends.google.com/trends/explore?cat=68&geo=SG
-            the cat is 68
+        def dynamic_sample(field_name, sub_path='demographics'):
+            """
+            Categorical sampler that handles weight dictionaries and Optuna overrides.
+            """
+            prob_key = f"{scenario}_{field_name}_probs"
             
-        Returns:
-            pandas series of google requested data
-        """
-        self.pytrend.build_payload(kw_list=kw_list,
-                        cat = catno,
-                        timeframe = 'all', 
-                        # or'today 5-y', 'today 3-m', 'all' 
-                        geo=geo)
+            clean_key = f"{field_name}_weights"
+            
+            baseline_dict = dw.get(clean_key, {})
+            default_probs = list(baseline_dict.values()) if isinstance(baseline_dict, dict) else baseline_dict
         
-        interest_over_time_df = self.pytrend.interest_over_time().iloc[:,0]
-        return(interest_over_time_df)
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            
+            return np.random.choice(len(p_vector), p=p_vector)
 
-    def next_quarter(self, prev_quarter):
-        year = int(prev_quarter[:4])
-        quarter_num = int(prev_quarter[-1])
-        if quarter_num >= 4:
-            quarter_num = 1
-            year = year + 1
+        actor = {
+            "EntityType":  dynamic_sample("entity_type"),
+            "RiskScore":   dynamic_sample("risk_score"),
+            "Nationality": dynamic_sample("nationality"),
+            "PEP":         1 if np.random.random() < opt_overrides.get(
+                               f"{scenario_type}_pep_status_prob", 
+                               dw.get('pep_status_prob', 0.05)
+                           ) else 0,
+                           
+            # --- NEW: INDUSTRY VARIATION ---
+            # We sample industry index (0, 1, 2...) from optimized weights
+            "Industry":    dynamic_sample("industry")
+        }
+
+
+        Entity_f   = 1.0
+        Risk_f     = 1.0
+        Juris_f    = 1.0
+        PEP_f      = 1.0
+        Industry_f = 1.0
+        
+        Static_Risk = Entity_f * Risk_f * Juris_f * PEP_f * Industry_f
+
+        rail_switch_intensity = 1.0
+        rail_div = 1.0
+        centrality_boost = 1.0
+        staged_escalation_factor = 1.0
+        
+        Total_Behavioral_Risk = (Static_Risk) * centrality_boost * (rail_switch_intensity / rail_div) * staged_escalation_factor
+
+        metadata_payload = [
+            actor["EntityType"], actor["RiskScore"], actor["Nationality"], actor["PEP"], actor["Industry"],
+            Entity_f, Risk_f, Juris_f, PEP_f, Industry_f, Static_Risk,
+            rail_switch_intensity, rail_div, centrality_boost, staged_escalation_factor,
+            Total_Behavioral_Risk
+        ]
+
+    elif scenario == "biz_inflow_outflow_ratio":
+
+        cfg = scenario_config['biz_inflow_outflow_ratio']
+        sampling_cfg = cfg['demographic_sampling']
+        multipliers = cfg['demographic_factors']  
+
+        def dynamic_sample(field_name):
+
+            prob_key = f"{scenario}_{field_name}_probs"
+            field_cfg = sampling_cfg.get(field_name, {})
+            default_probs = field_cfg.get('probabilities', [])
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            choices = field_cfg.get('choices', [])
+            return np.random.choice(choices, p=p_vector)
+        
+        actor = {
+            "Occupation": dynamic_sample("Occupation"),
+            "Industry":   dynamic_sample("Industry"),
+            "EntityType": dynamic_sample("EntityType"),
+            
+            "Age":         opt_overrides.get(f"{scenario}_age", np.random.uniform(20, 70)),
+            
+            "RiskScore":   opt_overrides.get(f"{scenario}_risk_score", 
+                                             np.random.randint(sampling_cfg['RiskScore']['low'], 
+                                                               sampling_cfg['RiskScore']['high'] + 1)),
+                                             
+            "RevenueBand": opt_overrides.get(f"{scenario_type}_revenue_band", 
+                                             np.random.lognormal(mean=9, sigma=1))
+        }
+
+        age          = actor["Age"]
+        occupation   = actor["Occupation"]
+        industry     = actor["Industry"]
+        entity_type  = actor["EntityType"]
+        risk_score   = actor["RiskScore"]
+        revenue_band = actor["RevenueBand"]
+
+
+        age_factor = 1.0
+    
+        occupation_risk = 1.0
+
+        industry_factor = 1.0
+
+        entity_multiplier = 1.0
+    
+        rev_factor = 1.0
+
+
+        D_Risk = (occupation_risk * industry_factor * entity_multiplier * rev_factor * age_factor)
+
+        cluster_component = 1.0
+
+        rail_component = 1.0
+
+        e_f = 1.0
+        
+        # 4. Final Calculation with 1e-6 Safeguard
+        Total_Behavioral_Risk = max(1e-6, (
+            D_Risk * 
+            cluster_component *
+            rail_component *
+            e_f
+        ))
+
+        metadata_payload = [
+            actor["Occupation"], actor["Industry"], actor["EntityType"], 
+            actor["Age"], actor["RiskScore"], actor["RevenueBand"],
+            age_factor, occupation_risk, industry_factor, entity_multiplier, rev_factor,
+            D_Risk, cluster_component, rail_component, e_f, Total_Behavioral_Risk
+        ]
+
+    elif scenario == "biz_monthly_volume_deviation":
+
+         def dynamic_sample(field_name):
+
+            prob_key = f"{scenario}_{field_name}_probs"
+            
+            field_data = sampling_cfg.get(field_name, {})
+            choices = field_data.get('choices', [])
+            default_probs = field_data.get('probabilities', [])
+            
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            
+            return np.random.choice(choices, p=p_vector)
+
+        # --- 2026 RECONCILED ACTOR GENERATION ---
+        actor = {
+
+            "Age":            dynamic_sample("Age"),
+            "Region":         dynamic_sample("Region"),
+            "Occupation":     dynamic_sample("Occupation"),
+            "BusinessSize":   dynamic_sample("BusinessSize"),
+            "Sophistication": dynamic_sample("Sophistication"),
+
+            "RiskScore": opt_overrides.get(
+                f"{scenario_type}_risk_score", 
+                np.random.beta(a=sampling_cfg['RiskScore']['a'], b=sampling_cfg['RiskScore']['b']) * 10
+            )
+        }
+
+        # --- SAFETY UNPACK (For downstream reference) ---
+        age            = actor["Age"]
+        region         = actor["Region"]
+        occupation     = actor["Occupation"]
+        risk_score     = actor["RiskScore"]
+        business_size  = actor["BusinessSize"]
+        sophistication = actor["Sophistication"]
+
+        
+        age_f      = 1.0
+        region_f   = 1.0
+        occ_f      = 1.0
+        biz_size_f = 1.0
+        soph_f     = 1.0
+        risk_f = 1.0
+        r_div = 1.0
+        
+        D_Risk = (age_f * region_f * occ_f * biz_size_f * soph_f * (risk_f / r_div))
+
+        centrality_component = 1.0
+        rail_component = 1.0
+        e_f = 1.0
+
+        # Final 2026 Unified Bridge with 1e-6 Safeguard
+        Total_Behavioral_Risk = max(1e-6, (
+            D_Risk * 
+            centrality_component * 
+            rail_component * 
+            e_f
+        ))
+
+
+        # Mapping the 'Who' (Gates) and the 'Logic' (Weights) for Bayesian Optimization
+        metadata_payload = [
+            actor["Age"], actor["Region"], actor["Occupation"], 
+            actor["BusinessSize"], actor["Sophistication"], actor["RiskScore"],
+            age_f, region_f, occ_f, biz_size_f, soph_f, risk_f, r_div,
+            D_Risk, centrality_component, rail_component, e_f, 
+            Total_Behavioral_Risk
+        ]
+
+    elif scenario == "biz_round_tripping":
+
+        cfg = scenario_config['biz_round_tripping']
+        sampling_cfg = cfg['demographic_sampling']
+        multipliers = cfg['demographic_factors']
+
+        rs_cfg = sampling_cfg.get('RiskDistribution', {'alpha': 2.0, 'beta': 5.0, 'scale': 10.0})
+        raw_beta = np.random.beta(rs_cfg['alpha'], rs_cfg['beta'])
+        generated_risk_score = round(raw_beta * rs_cfg['scale'], 2)
+
+        def dynamic_sample(field_name):
+            
+            prob_key = f"{scenario}_{field_name}_probs"
+            field_data = sampling_cfg.get(field_name, {})
+            choices = field_data.get('choices', [])
+            default_probs = field_data.get('probabilities', [])
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            return np.random.choice(choices, p=p_vector)
+
+        entity = {
+            
+            "EntityType":      dynamic_sample("EntityType"),
+            "EntitySize":      dynamic_sample("EntitySize"),
+            "OwnershipType":   dynamic_sample("OwnershipType"),
+            "IndustrySector":  dynamic_sample("IndustrySector"),
+
+            "ComplexityLevel": np.random.randint(
+                opt_overrides.get(f"{scenario}_ComplexityMin", sampling_cfg['ComplexityLevel']['min']),
+                opt_overrides.get(f"{scenario}_ComplexityMax", sampling_cfg['ComplexityLevel']['max']) + 1
+            ),
+
+            "RiskScore": opt_overrides.get(
+                f"{scenario_type}_RiskScore_base", 
+                round(np.random.beta(rs_cfg['alpha'], rs_cfg['beta']) * rs_cfg['scale'], 2)
+            ),
+            
+            "CrossBorderFactor": opt_overrides.get(
+                f"{scenario_type}_CrossBorder_f", 
+                sampling_cfg.get('CrossBorderFactor', 1.0)
+            )
+        }
+
+
+        entity_type      = entity["EntityType"]
+        entity_size      = entity["EntitySize"]
+        ownership_type   = entity["OwnershipType"]
+        industry_sector  = entity["IndustrySector"]
+        complexity_level = entity["ComplexityLevel"]
+        risk_score       = entity["RiskScore"]
+        cross_border_f   = entity["CrossBorderFactor"]
+
+
+        entity_f   = 1.0
+        size_f     = 1.0
+        owner_f    = 1.0
+        industry_f = 1.0
+        complexity_f = 1.0
+        cross_border_f = 1.0
+        r_div = 1.0
+        D_Risk = (entity_f * size_f * owner_f * industry_f * complexity_f * cross_border_f * (entity['RiskScore'] / r_div))
+
+        shell_component = 1.0
+        rail_component  = 1.0
+        trade_component = 1.0
+        econ_f = 1.0
+
+
+        Total_Behavioral_Risk = max(1e-6, (
+            D_Risk * 
+            shell_component * 
+            rail_component * 
+            trade_component * 
+            econ_f
+        ))
+
+        metadata_payload = [
+            entity["EntityType"], entity["EntitySize"], entity["OwnershipType"], 
+            entity["IndustrySector"], entity["ComplexityLevel"], entity["RiskScore"], 
+            entity["CrossBorderFactor"],
+            entity_f, size_f, owner_f, industry_f, complexity_f, cross_border_f, r_div,
+            D_Risk, shell_component, rail_component, trade_component, econ_f, 
+            Total_Behavioral_Risk
+        ]
+
+    elif scenario == "biz_flag_non_nexus":
+    
+        cfg = scenario_config['biz_flag_non_nexus']
+        sampling_cfg = cfg['demographic_sampling']
+        multipliers = cfg['demographic_factors']
+
+
+        pfx = f"{scenario}_"
+
+        def dynamic_sample(field_name):
+
+            prob_key = f"{pfx}{field_name}_probs"
+            
+            default_probs = sampling_cfg.get(field_name, {}).get('probabilities', [])
+            
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            
+            return np.random.choice(len(p_vector), p=p_vector)
+
+        actor = {
+            "Age":           dynamic_sample("Age"),
+            "Occupation":    dynamic_sample("Occupation"),
+            "Nationality":   dynamic_sample("Nationality"),
+            "EntityType":    dynamic_sample("EntityType"),
+            "RiskProfile":   dynamic_sample("RiskProfile"),
+            "ActivityLevel": dynamic_sample("ActivityLevel")
+        }
+
+        
+        age_f = 1.0
+        occ_f = 1.0
+        entity_f = 1.0
+        risk_f = 1.0
+        activity_f = 1.0
+        nationality_f = 1.0
+
+        D_Risk = (age_f * occ_f * entity_f * risk_f * activity_f * nationality_f)
+
+
+        node_boost = 1.0
+        node_base  = 1.0
+        
+        rail_int = 1.0
+        rail_div = 1.0
+        
+        esc_fact = 1.0
+        esc_base = 1.0
+
+        Total_Behavioral_Risk = max(1e-6, (
+            D_Risk * 
+            (node_boost if actor['RiskProfile'] == "High" or actor['RiskProfile'] == 2 else node_base) * 
+            (rail_int / rail_div) * 
+            (esc_fact if actor['Nationality'] == "International" or actor['Nationality'] == 1 else esc_base)
+        ))
+
+        metadata_payload = [
+            actor["Age"], actor["Occupation"], actor["Nationality"], 
+            actor["EntityType"], actor["RiskProfile"], actor["ActivityLevel"],
+            age_f, occ_f, entity_f, risk_f, activity_f, nationality_f,
+            D_Risk, node_boost, node_base, rail_int, rail_div, 
+            esc_fact, esc_base, Total_Behavioral_Risk
+        ]
+
+    elif scenario == "biz_flag_pep_indonesia":
+
+        cfg = scenario_config['biz_flag_pep_indonesia']
+        sampling_cfg = cfg['demographic_sampling']
+        micro_cfg = cfg['micro_params']
+        multipliers = cfg['demographic_factors']
+
+        
+        # Mandatory Dual-Prefix Handshake
+        pfx = f"{scenario}_"
+
+        def dynamic_sample(field_name):
+            
+            prob_key = f"{pfx}dist_{field_name}" # Matches Block 0 "dist_" prefix
+            default_probs = sampling_cfg.get(field_name, {}).get('probabilities', [])
+            p_vector = opt_overrides.get(prob_key, default_probs)
+            
+            return np.random.choice(len(p_vector), p=p_vector)
+
+
+        actor = {
+
+            "age": np.random.uniform(
+                opt_overrides.get(f"{pfx}age_min", sampling_cfg['age_range'][0]),
+                opt_overrides.get(f"{pfx}age_max", sampling_cfg['age_range'][1])
+            ),
+
+            "tenure": np.random.uniform(
+                opt_overrides.get(f"{pfx}tenure_min", sampling_cfg['tenure_range'][0]),
+                opt_overrides.get(f"{pfx}tenure_max", sampling_cfg['tenure_range'][1])
+            ),
+
+            "gender": dynamic_sample("gender"),
+            "role": dynamic_sample("role"),
+            "entity_type": dynamic_sample("entity_type"),
+
+            "nationality": "Indonesia"
+        }
+
+
+        age = actor['age']
+        gender = actor['gender']
+        role = actor['role']
+        tenure = actor['tenure']
+        entity_type = actor['entity_type']
+        
+ 
+
+        role_f    = 1.0
+        
+        entity_f  = 1.0
+        
+        gender_f  = 1.0
+
+        tenure_f = 1.0
+
+        D_Risk = (role_f * entity_f * gender_f * tenure_f)
+        
+
+        n_boost = 1.0
+        n_base  = 1.0
+        
+        r_int = 1.0
+        r_div = 1.0
+
+        t_decay_f   = 1.0
+        t_risk_thr  = 1.0
+        t_risk_base = 1.0
+
+        Total_Behavioral_Risk = max(1e-6, (
+            D_Risk * 
+            (n_boost if actor['role'] == "Advisor" or actor['role'] == 2 else n_base) * 
+            (r_int / r_div) * 
+            (t_risk_base + (t_risk_base - t_decay_f) if actor['tenure'] < t_risk_thr else 1.0)
+        ))
+
+        metadata_payload = [
+            # 1. Actor Persona (Categorical/Continuous DNA)
+            actor["age"],           # Numeric
+            actor["gender"],        # Index
+            actor["role"],          # Index
+            actor["tenure"],        # Numeric
+            actor["entity_type"],    # Index
+            actor["nationality"],   # String ("Indonesia")
+
+            # 2. Multipliers (All Neutral 1.0 per 2026 agreement)
+            role_f, 
+            entity_f, 
+            gender_f, 
+            tenure_f,
+
+            # 3. Intermediate Risk Calculations
+            D_Risk, 
+
+            # 4. Behavioral & Rail Params
+            n_boost, 
+            n_base, 
+            r_int, 
+            r_div, 
+            t_decay_f, 
+            t_risk_thr, 
+            t_risk_base,
+
+            # 5. Final Behavioral Signal
+            Total_Behavioral_Risk
+        ]
+    elif scenario == "biz_flag_personal_to_corp":
+
+        cfg = scenario_config['biz_flag_personal_to_corp']
+        sampling_cfg = cfg['demographic_sampling']
+        multipliers = cfg['demographic_factors']
+        corp_cfg = cfg['corporate']
+        micro_cfg = cfg['micro_params']
+    
+
+        def dynamic_sample(field_name):
+            prob_key = f"{scenario}_{field_name}_probs"
+            default_probs = sampling_cfg.get(field_name, {}).get('probabilities', [])
+            p_vector = opt_overrides.get(prob_key, default_probs)
+
+            return np.random.choice(len(p_vector), p=p_vector)
+
+
+        actor = {
+
+            "age": np.random.randint(
+                opt_overrides.get(f"{scenario}_age_min", sampling_cfg['age_range'][0]),
+                opt_overrides.get(f"{scenario}_age_max", sampling_cfg['age_range'][1]) + 1
+            ),
+            
+
+            "income": np.random.lognormal(
+                mean=opt_overrides.get(f"{scenario}_inc_mean", sampling_cfg['income_lognormal']['mean']),
+                sigma=opt_overrides.get(f"{scenario}_inc_sigma", sampling_cfg['income_lognormal']['sigma'])
+            ),
+            
+
+            "occupation":   dynamic_sample("occupation"),
+            "entity_type":  dynamic_sample("entity_type"),
+            "risk_profile": dynamic_sample("risk_profile")
+        }
+
+
+        age, occ, inc = actor['age'], actor['occupation'], actor['income']
+        risk_profile, entity_type = actor['risk_profile'], actor['entity_type']
+
+
+        occ_f    = 1.0
+        
+        entity_f = 1.0
+        
+        risk_f   = 1.0
+
+        if actor['age'] < 30:
+            age_f = 1.0
+        elif actor['age'] > 55:
+            age_f = 1.0
         else:
-            quarter_num += 1
-        return str(year) + "-Q" + str(quarter_num)
+            age_f = 1.0
 
-    def prev_quarter(self, quarter):
-        year = int(quarter[:4])
-        quarter_num = int(quarter[-1])
-        if quarter_num == 1:
-            quarter_num = 4
-            year = year - 1
-        else:
-            quarter_num -= 1
-        return str(year) + "-Q" + str(quarter_num)
+        income_f = 1.0
 
-    def get_date_from_quarter(self, quarter):
-        year = quarter.split("-")[0]
-        q = quarter.split("-")[1][1]
-        if q == "1":
-            month = "01"
-        elif q == "2":
-            month = "04"
-        elif q == "3":
-            month = "07"
-        elif q == "4":
-            month = "10"
-        return (year + "-" + month + "-" + "01")
-
-    def model(self, starting_quarter, ending_quarter):
-
-        quarters = []
-        quarter = starting_quarter
-
-        while quarter != self.next_quarter(ending_quarter):
-            quarters.append(quarter)
-            quarter = self.next_quarter(quarter)
-
-        starting_quarter = quarters[0]
-        ending_quarter = quarters[-1]
-
-        with open("result (New NSA).json", "r") as f:
-            data = json.loads(f.read())
-
-        main_df = pd.DataFrame()    
-
-        for dic in data["Level2"]:
-            main_df.loc[dic["quarter"], dic["level_2"]] = dic["value"]
-
-        main_df.loc[ending_quarter, :] = np.nan
-        main_df = main_df.loc["2004-Q1":, :]
-
-        predictions_df = pd.DataFrame(index=quarters)
+        D_Risk = (occ_f * entity_f * risk_f * age_f * income_f)
         
-        flag = 0
-        double_flag = 0
-        industry_count = 1
+       
+      
+        node_boost = 1.0
+        node_base  = 1.0
 
-        # starting loop for every Level 2 Item
-        for column in main_df.columns:
+        rail_int = 1.0
+        rail_div = 1.0
+        
+        esc_fact = 1.0
+        esc_base = 1.0
+
+        w_decay_f   = 1.0
+        w_threshold = 1.0
+        
+        w_offset    = 1.0
+        w_logic_sc  = 1.0
+        w_inactive  = 1.0
+
+        # --- EXECUTION: NO HARDCODED ONES, TWOS, OR HUNDREDS ---
+        Total_Behavioral_Risk = max(1e-6, (
+            D_Risk * 
+            (node_boost if actor['risk_profile'] == "High" else node_base) * 
+            (rail_int / rail_div) * 
+            (esc_fact if actor['entity_type'] == 'BusinessLinked' else esc_base) *
+            (w_offset + (w_logic_sc - w_decay_f) if actor['income'] < w_threshold else w_inactive)
+        ))
+
+        metadata_payload = [
+            # 1. Actor Persona (DNA)
+            actor["age"],           # Continuous (Int)
+            actor["occupation"],    # Index/Categorical
+            actor["income"],        # Continuous (Float)
+            actor["entity_type"],   # Index/Categorical
+            actor["risk_profile"],  # Index/Categorical
             
-            trends_params = trends_dict[column]
-            
-            trends1 = self.request_google(kw_list=[trends_params[0][0]], geo=trends_params[0][1])
-            trends2 = self.request_google(kw_list=[trends_params[1][0]], geo=trends_params[1][1])
-            
-            trends1 = trends1["2004-01-01":self.get_date_from_quarter(quarters[-1])]
-            trends2 = trends2["2004-01-01":self.get_date_from_quarter(quarters[-1])]
+            # 2. Multipliers (Neutral 1.0)
+            occ_f, 
+            entity_f, 
+            risk_f, 
+            age_f, 
+            income_f,
 
-            # if column in series_to_predict:
-            #   print("Google Trends Data: \n")
-            #   display(pd.concat([trends1, trends2], axis=1).style.apply(border_color_green).set_table_styles([{'selector':'th','props':[('border','3px solid green'), ('color','red')]}]))
+            # 3. Intermediate Calculations
+            D_Risk, 
 
-            # trends1 = np.log(trends1).dropna()
-            # trends2 = np.log(trends2).dropna()
-            
-            actual_values = []
-            predictions = []
-            
-            end_date = starting_quarter
-            end_date_one_minus = self.prev_quarter(end_date)
-            
-            # print(column)
-            if column in series_to_predict:
-                print("\nPredicting for %s now.\n" % column)
+            # 4. Behavioral & Rail Params
+            node_boost, 
+            node_base, 
+            rail_int, 
+            rail_div, 
+            esc_fact, 
+            esc_base, 
 
-            index = 0
-            while True:
-                
-                if end_date in quarters:
-                    train = main_df.loc['2004-Q1':end_date, column]
-                    train_logged = train.copy()
-                    minimum = min(train_logged)
-            
-                    if column in series_to_predict:
-                        if end_date == starting_quarter:
-                            # print("\nTraining Dataframe")
-                            # display_train = train_logged.copy(deep=True)
-                            # display_train.index.name = "Quarter"
-                            # display(pd.DataFrame(display_train).style.apply(border_color_green).set_table_styles([{'selector':'th','props':[('border','3px solid green'), ('color','red')]}]))
-                            print("\n\033[1m\033[4mTitle %d: OLS Out-of-Sample Forecast of %s : %s (Level 2), for Periods %s to %s\033[0m" % (industry_count, column, series_to_predict[column], starting_quarter, ending_quarter))
-                            #pp = ProgressPlot(line_names=["Actual Values", "Predicted Values"], line_colors=["#FF3333", "#3336FF"], width=1250,x_label="Quarter", x_iterator=False, x_lim= [1, len(quarters)])
-                    #######################################################################################################################################################################
-                    # F Test (Used the OLS model to do F Test, because current model produces p value = nan, where both string method and array method are used.)
-                    # Results are carried out with the help of examples given on http://www.statsmodels.org/v0.10.0/generated/statsmodels.tsa.statespace.sarimax.SARIMAXResults.f_test.html
-                    #######################################################################################################################################################################
-                    # print("\nF Test:\n")
-                    # formula = "rsi ~ "
-                    # hypotheses = ""
-                    # for name in trends_columns_names:
-                    #   formula += name + "+ "
-                    #   hypotheses += "(" + name + " = 0), " #This part here is a loop which mentions all the google trends
-                    # formula += "cny_b + cny_d + cny_a"
-                    # results = ols(formula, test).fit()
-                    # #hypotheses += "(cny_b = 0), (cny_d = 0), (cny_a = 0)"
-                    # A = np.identity(len(results.params))
-                    # print("Result Parameters:", results.params[1:-3])
-                    # A = A[1:,:]
-                    # print("Hypotheses string method:")
-                    # print("Hyptheses:", hypotheses[:-2])
-                    # print(results.f_test(hypotheses[:-2]))
-                    # print("\nArray method:")
-                    # print("Array:", A)
-                    # print(results.f_test(A))
+            # 5. Scenario Specific Weights (Wealth/Income Logic)
+            w_decay_f, 
+            w_threshold, 
+            w_offset, 
+            w_logic_sc, 
+            w_inactive,
 
-                    train_logged = train_logged.dropna()
-                    train_logged[end_date] = np.nan
-                            
-                    train_logged.index = pd.DatetimeIndex(train_logged.index)
-                    last_date = train_logged.index[-2]
-
-                    train_trends1 = trends1[:end_date].copy()
-                    train_trends2 = trends2[:end_date].copy()
-
-                    """
-                    C. TRAIN THE MODEL
-
-                    """
-                    """
-                    1. Fit the model on train
-                    """
-                #     train = train.dropna()
-                #     train_logged = train_logged.dropna()
-                        
-                    combined_df = pd.concat([train_logged, train_trends1, train_trends2],axis=1,join='outer').dropna()
-                    
-                        
-                    model = OLS(endog = combined_df.iloc[:-1, :-2], exog=combined_df.iloc[:-1, -2:])  
-                    
-                    fit_res = model.fit()  
-                    
-                        
-                    """
-                    D. DISPLAY PREDICTION RESULTS
-
-                    """
-
-
-                    # print("\nForecast Results for %s, %s: \n" % (end_date, column))
-                    
-                    prediction = fit_res.get_prediction(exog=combined_df.iloc[-1:,-2:]).summary_frame()  
-                    last_row = prediction.tail(1)
-                    value = last_row.iloc[0][0]
-                    prediction = value  
-                    print('prediction is ', prediction)
-                    try:
-                        print(predicted_df.iloc[-1, 1])
-                    except Exception:
-                        pass
-
-                    predictions.append(prediction)
-                    actual_values.append(train[end_date])
-                    print('Appended predictions is/are: ', predictions)
-                    
-                    
-                        # print('\033[94m\033[1m' + str(prediction) + '\033[0m')
-
-                    if column in series_to_predict:
-                        #pp.update(index+1, [[train[starting_quarter:ending_quarter].values[index] / 1000, prediction / 1000]])
-                        time.sleep(0.5)
-                        index += 1
-                
-                summary = fit_res.summary() if self.show_trend else None
-                
-                if end_date == ending_quarter:
-                    if column in series_to_predict:
-                        print('pp. finalize is ')  
-                    #pp.finalize()
-                    break
-                end_date_one_minus = end_date
-                end_date = self.next_quarter(end_date)
-
-                
-
-
-            # Plotting actual RSI vs Predicted RSI
-
-            predictions_df[column] = predictions
-            
-            if column in series_to_predict:
-                predicted_df = pd.DataFrame({"Actual %s Values" % column: actual_values, "Predicted %s Values" % column: predictions}, index=quarters)
-                title = 'Title %d: OLS Out-of-Sample Forecast of %s : %s (Level 2), for Periods %s to %s' % (industry_count, column, series_to_predict[column], starting_quarter, ending_quarter)
-                annotation = "Latest Prediction for %s : %s, %s: %f" % (column, series_to_predict[column], predicted_df.index[-1], predicted_df.iloc[-1, 1]/1000)
-                self.layouts.append(self.plot(industry_count, predicted_df, column, actual_values, predictions, starting_quarter, ending_quarter, annotation, title, summary=summary))
-                industry_count += 1
-
-            
-        print("\nGetting Predictions for Level 1 Items:\n")
-            
-        level_dictionary = {'NA000330Q': {'NA000331Q': 1, 'NA000332Q': 1},
-                            'NA000333Q': {'NA000330Q': 1, 'NA000351Q': 1}, 
-                            'NA000342Q': {'NA000343Q': 1, 'NA000344Q': 1},
-                            'NA000352Q': {'NA000353Q': 1, 'NA000354Q': 1},
-                            'NA000374Q': {'NA000342Q': 1, 'NA000352Q': 1},
-                            'NA000336Q': {'NA000339Q': 1, 'NA000340Q': 1, 'NA000341Q': 1},
-                            'NA000337Q': {'NA000336Q': 1, 'NA000338Q': 1},
-                            'NA000335Q': {'NA000337Q': 1, 'NA000373Q': 1},
-                            'NA000347Q': {'NA000346Q': 1, 'NA000348Q': 1},
-                            'NA000349Q': {'NA000347Q': 1, 'NA000350Q': 1},
-                            'NA000334Q': {'NA000333Q': 1, 'NA000335Q': 1, 'NA000349Q': 1, 'NA000374Q': 1},
-                            }
-
-
-        with open("result (New NSA).json", "r") as f:
-            data = json.loads(f.read())
-
-        level1_df = pd.DataFrame()  
-
-        for dic in data["Level1"]:
-            level1_df.loc[dic["quarter"], dic["level_1"]] = dic["value"]
-            
-        level1_df.loc[ending_quarter, :] = np.nan
-
-        for column, array in level_dictionary.items():
-            predicted_df = pd.DataFrame({"Actual %s Values" % column: level1_df.loc[quarters, column]}, index=quarters)
-            predicted_df["Predicted %s Values" % column] = 0
-            
-            
-            for item in array:
-                if item == "NA000342Q":
-                    predicted_df["Predicted %s Values" % column] -= predictions_df[item] * array[item]
-                else:
-                    predicted_df["Predicted %s Values" % column] += predictions_df[item] * array[item]
-                    
-            # fig1, ax1 = plt.subplots()
-            # ax1.pie(pie_values_array, labels=array, autopct='%1.1f%%',
-            #     shadow=True, startangle=90)
-            # ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-
-            # plt.show()
-                    
-            if column not in predictions_df.columns:
-                predictions_df[column] = predicted_df["Predicted %s Values" % column]
-                    
-            if column in series_to_predict:
-                print("\n\033[1m\033[4mTitle %d: OLS Out-of-Sample Forecast of %s : %s (Level 1), for Periods %s to %s" % (industry_count, column, series_to_predict[column], starting_quarter, ending_quarter))
-                annotation = "Latest Prediction for %s, %s: %f" % (column, predicted_df.index[-1], predicted_df.iloc[-1, 1]/1000)
-                title = 'Title %d: OLS Out-of-Sample Forecast of %s : %s (Level 1), for Periods %s to %s' % (industry_count, column, series_to_predict[column], starting_quarter, ending_quarter)
-                self.layouts.append(self.plot(industry_count, predicted_df, column, actual_values, predictions, starting_quarter, ending_quarter, annotation, title, summary=summary))
-                industry_count += 1
-
-        return self.layouts
-
-
-starting_quarter = [
-                    '2015-Q1',
-                    '2015-Q2',
-                    '2015-Q3',
-                    '2015-Q4',
-                    '2016-Q1',
-                    '2016-Q2',
-                    '2016-Q3',
-                    '2016-Q4',
-                    '2017-Q1',
-                    '2017-Q2',
-                    '2017-Q3',
-                    '2017-Q4',
-                    '2018-Q1',
-                    '2018-Q2',
-                    '2018-Q3',
-                    '2018-Q4',
-                    '2019-Q1',
-                    '2019-Q2',
-                    '2019-Q3',
-                    '2019-Q4',
-                    '2020-Q1',
-                    '2020-Q2',
-                    '2020-Q3',
-                    ]
-
-ending_quarter = [
-                  '2015-Q1',
-                  '2015-Q2',
-                  '2015-Q3',
-                  '2015-Q4',
-                  '2016-Q1',
-                  '2016-Q2',
-                  '2016-Q3',
-                  '2016-Q4',
-                  '2017-Q1',
-                  '2017-Q2',
-                  '2017-Q3',
-                  '2017-Q4',
-                  '2018-Q1',
-                  '2018-Q2',
-                  '2018-Q3',
-                  '2018-Q4',
-                  '2019-Q1',
-                  '2019-Q2',
-                  '2019-Q3',
-                  '2019-Q4',
-                  '2020-Q1',
-                  '2020-Q2',
-                  '2020-Q3'
-                  ]
-
-series_names = {'NA000330Q': 'Mandarin',
-                'NA000331Q': 'Apple',
-                'NA000332Q': 'Watermelon',
-                'NA000333Q': 'Jackfruit',
-                'NA000334Q': 'Papaya',
-                'NA000335Q': 'Grapefruit',
-                'NA000336Q': 'Lemon',
-                'NA000337Q': 'Apricot',
-                'NA000338Q': 'Orange',
-                'NA000339Q': 'Pear',
-                'NA000340Q': 'Cherry',
-                'NA000341Q': 'Strawberry',
-                'NA000342Q': 'Kiwi',
-                'NA000343Q': 'Nectarine',
-                'NA000344Q': 'Grape',
-                'NA000346Q': 'Mango',
-                'NA000347Q': 'Melon',
-                'NA000348Q': 'Blueberry',
-                'NA000349Q': 'Coconut',
-                'NA000350Q': 'Pomegranate',
-                'NA000351Q': 'Carambola',
-                'NA000352Q': 'Pineapple',
-                'NA000353Q': 'Plum',
-                'NA000354Q': 'Banana',
-                'NA000373Q': 'Raspberry',
-                'NA000374Q': 'Lime'}
-
-series_to_predict = {}
-
-
-
-trends_dict = {'NA000331Q': [['shopping', 'US'], 
-                             ['employment', 'US']],
-                'NA000332Q': [['shopping', 'US'], 
-                              ['employment', 'US']],
-                 'NA000338Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000339Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000340Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000341Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000343Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000344Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000346Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000348Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000350Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000351Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000353Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000354Q': [['shopping', 'US'], 
-                               ['employment', 'US']],
-                 'NA000373Q': [['shopping', 'US'], 
-                               ['employment', 'US']]
-              }
-
-
-# def get_dates(starting_date, ending_date):  
-#   dates = []
-#   date = starting_date
-#   while str(date) != str(ending_date):
-#     dates.append(date)
-#     year = int(date.split("-")[0])
-#     month = int(date.split("-")[1])
-#     month += 1
-#     if month == 13:
-#       month = 1
-#       year += 1
-#     if month > 9:
-#       month = str(month)
-#     else:
-#       month = "0" + str(month)
-#     date = str(year) + "-" + month + "-01" 
-#     print(date)
-#   dates.append(ending_date)
-#   return dates
-
-
-dropdown_industry = []
-for i in series_names:
-    m = {'label':i,'value':i}
-    dropdown_industry.append(m)
-
-drop_dates_start = []
-for i in starting_quarter:
-  m = {'label':i,'value':i}
-  drop_dates_start.append(m)
-
-drop_dates_end = []
-for i in ending_quarter:
-  m = {'label':i,'value':i}
-  drop_dates_end.append(m)
-
-
-external_css = [
-    'https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0-rc.2/css/materialize.min.css',
-    'https://fonts.googleapis.com/icon?family=Material+Icons',
-    'https://codepen.io/muhnot/pen/bKzaZr.css', 
-    'https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.7.2/animate.min.css',
-    'https://res.cloudinary.com/dlmqmx0oc/raw/upload/v1609646491/style_vi1ar3.css'
-]
-
-external_js = [
-     'https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0-rc.2/js/materialize.min.js',
-     'https://code.jquery.com/jquery-3.3.1.min.js',
-     'https://codepen.io/muhnot/pen/bKzaZr.js'
-]
-
-app = dash.Dash(
-    external_scripts=external_js,
-    external_stylesheets=external_css,
-    meta_tags=[
-        {"name": "viewport", "content": "width=device-width, initial-scale=1"}
-    ],
-    suppress_callback_exceptions=True
-  )
-server = app.server
-
-review_layout = []
-
-stats_layout = [
-    html.Div([
-      html.Div(className='col s12 m5', children=dbc.Button("Back", type='submit', id="back", className="col-content green darken-4 white-text", n_clicks=0,style={'marginTop': 10})),
-      html.H1('Literature Review and Methodology'),
-      html.P('Lorem ipsum dolor sit amet consectetur adipisicing elit. Tempora repellendus temporibus distinctio molestias. Veniam laudantium omnis voluptas dolorem dolor possimus impedit minima, ducimus corrupti quas facere delectus autem aspernatur dignissimos deserunt id saepe odit qui fugit sunt. Veniam, sunt eum?')
-      ], className='review', id='review', style={'display':'none'}
-    ),
-    html.Div([
-      html.H2("Trend Predictor: ", style={'color':'white'}),
-      html.Div(className='row',children = [
-        html.Div(className='col s5 m4 wrapper',children=[
-          html.Label('Enter a Start Date', htmlFor='start-date', style={'fontWeight':'bold','fontSize': '1rem', 'color': 'white'}),
-          dcc.Dropdown(
-          id='start-date',
-          options=drop_dates_start,
-          style={'marginBottom': 10, 'marginTop': 10, 'color': 'black'}
-          )
-          ],
-          style={'margin': '4px'}),
-        html.Div(className='col s5 m4 wrapper',children=[
-            html.Label('Enter an End Date', htmlFor='end-date', style={'fontWeight':'bold','fontSize': '1rem','color': 'white'}),
-            dcc.Dropdown(
-            id='end-date',
-            options=drop_dates_end,
-            style={'marginBottom': 10, 'marginTop': 10, 'color': 'black'} 
-          )
-          ],
-          style={'margin': '4px'}),
-          html.Div(className='col s11 m3 wrapper',children=[
-            html.Label('Select Visualization', htmlFor='plot-type', style={'fontWeight':'bold','fontSize': '1rem','color': 'white'}),
-            dcc.Dropdown(
-              id='plot-type',
-              options=[
-                  {'label': 'Plotly', 'value': 'PLOT'},
-                  {'label': 'Matplotlib', 'value': 'MAT'}
-              ],
-              value='PLOT',      
-              style={'marginBottom': 10, 'marginTop': 10, 'color': 'black'} 
-            ) 
-          ],
-          style={'margin': '4px'}),
-        html.Div(className='col s11 wrapper',children=[
-          html.Label('Select Series to Predict', htmlFor='dropdown', style={'fontWeight':'bold','fontSize': '1rem', 'color': 'white'}),
-          dcc.Dropdown(
-          id='dropdown',
-          options=dropdown_industry,
-          multi=True,
-          style={'marginBottom': 10, 'marginTop': 10, 'color': 'black'}
-          )
-          ],
-          style={'margin': '4px'}),
-        html.Div(className='col s12', children=[
-          html.Center(children=[
-            html.Div(className='col s12 m5', children=dbc.Button("Literature Review and Methodology", type='submit', id="show-literature", className="col-content green darken-4 white-text", n_clicks=0,style={'marginTop': 10})),
-            html.Div(className='col s12 m3', children=dbc.Button("PREDICT TREND", id="submit-val", className="col-content blue", n_clicks=0,style={'marginTop': 10})),
-            html.Div(className='col s12 m4', children=dbc.Button("SHOW TREND PARAMETERS", id="show-trend", className="col-content orange", n_clicks=0,style={'marginTop': 10})),
-          ])
-        ]),
-        html.Div(className='col s12',children=[
-          dcc.Loading(
-                      id="loading-2",
-                      children=[html.Div(id='output')],
-                      type="default",
-                      fullscreen=True
-                  )
-          ])
-      ])
-    ], className='stats', id='stats', style={'display':'block'})
-]
-
-
-
-theme_colors=[
-  {'label':'Purple', 'value': 'purple darken-4'},
-  {'label':'Blue',   'value': 'blue darken-4'},
-  {'label':'Green',  'value': 'green darken-4'},
-  {'label':'Black',  'value': 'black'},
-  {'label':'Brown',  'value': 'brown darken-4'},
-]
-
-app.layout = html.Div([
-    html.Div(
-      html.Div([
-        html.Label('Select Theme', htmlFor='color-picker', style={'color':'black'}),
-        dcc.Dropdown( 
-          options=theme_colors, id='color-picker', value='purple darken-4', clearable=False)],
-      className='col s7 m3 wrapper', style={'padding':'4px'}
-      ),
-      className='container row wrapper-orange', style={'padding':'4px'}
-    ),
-    html.Div(id='page-content', className='container purple darken-4',children=[
-      *stats_layout
-    ], style={'borderRadius': '5px', 'padding':'4px', 'marginTop':'10px', 'color': 'white'})
-  ]
-)
-
-@app.callback(Output(component_id='page-content', component_property='className'),
-              [
-                Input(component_id='color-picker', component_property='value'),
-              ])
-def update_background_color(value):
-  class_name = 'container {} {}'
-  wrapper_theme = 'wrapper-orange'
-  if 'purple' in value:
-    wrapper_theme = 'wrapper-green'
-  name = class_name.format(value, wrapper_theme)
-  return name
-
-@app.callback([
-    Output(component_id='review', component_property='style'),
-    Output(component_id='stats', component_property='style')
-  ],
-  [
-    Input(component_id='show-literature', component_property='n_clicks'),
-    Input(component_id='back', component_property='n_clicks')
-  ]
-  )
-def hide_review(l_clicks, b_clicks):
-  changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
-  print(changed_id)
-  if 'show-literature' in changed_id:
-    return [{'display': 'block'}, {'display': 'none'}]
-  else:
-    return [{'display': 'none'}, {'display': 'block'}]
-
-@app.callback(
-    dash.dependencies.Output('output', 'children'),
-    [
-      dash.dependencies.Input(component_id='submit-val', component_property='n_clicks'),
-      dash.dependencies.Input(component_id='show-trend', component_property='n_clicks'),
-      dash.dependencies.State(component_id='start-date', component_property='value'),
-      dash.dependencies.State(component_id='end-date', component_property='value'),
-      dash.dependencies.State(component_id='dropdown', component_property='value'),
-      dash.dependencies.State(component_id='plot-type', component_property='value')
-    ])
-def update_output(clicks, show_trend, starting_quarter, ending_quarter, industry_names, plot_type):
-    trend = False
-    changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
-    if 'submit-val' in changed_id:
-        show_trend = False
-    elif 'show-trend' in changed_id:
-        trend = True
-        clicks += 1
-    if industry_names != None and starting_quarter != None and clicks > 0:
-        print('starting model')
-        for s in industry_names:
-            series_to_predict[s] = series_names[s]
-        print(series_to_predict)
-        ploter = Plotter()
-        model = Modeller(ploter,plot_type, show_trend=trend)
-        layouts = model.model(starting_quarter, ending_quarter) 
-        return layouts
-
-if __name__ == '__main__':
-    app.run_server(debug=True,port='8080', host="0.0.0.0")
+            # 6. Final Behavioral Signal
+            Total_Behavioral_Risk
+        ]
